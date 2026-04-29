@@ -50,6 +50,7 @@ type InterestDebtRow = {
   current_balance_minor: number
   interest_rate: string
   created_at: string
+  is_simulated?: boolean
 }
 
 type AccrualRow = {
@@ -125,6 +126,7 @@ export function getDebtTimeline(params: GetDebtTimelineParams): TimelineEvent[] 
         source_installment_id: idb.source_installment_id,
         interest_rate: idb.interest_rate,
         current_balance_minor: BigInt(idb.current_balance_minor),
+        simulated: idb.is_simulated ?? false,
       },
     })
   }

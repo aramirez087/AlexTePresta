@@ -17,23 +17,14 @@ async function resolveSimulatedRate(
   debtorId: string,
   fallbackRate: string,
 ): Promise<string> {
-  // boundary: user_simulation_overrides is added in migration 0007, not yet in generated types
-  const untypedClient = adminClient as unknown as {
-    from: (table: string) => {
-      select: (cols: string) => {
-        eq: (col: string, val: string) => { maybeSingle: () => Promise<{ data: unknown }> }
-      }
-    }
-  }
-
-  const { data: override } = await untypedClient
+  const { data: override } = await adminClient
     .from('user_simulation_overrides')
     .select('simulated_annual_rate')
     .eq('user_id', debtorId)
     .maybeSingle()
 
   if (override) {
-    return (override as { simulated_annual_rate: string }).simulated_annual_rate
+    return override.simulated_annual_rate
   }
 
   const { data: setting } = await adminClient
@@ -43,9 +34,8 @@ async function resolveSimulatedRate(
     .maybeSingle()
 
   if (setting) {
-    // boundary: JSONB value is already parsed by Supabase — string JSON becomes JS string
-    const val = (setting as { value: unknown }).value
-    return typeof val === 'string' ? val : String(val)
+    // boundary: JSONB value — string JSON becomes JS string after PostgREST parse
+    return typeof setting.value === 'string' ? setting.value : String(setting.value)
   }
 
   return fallbackRate

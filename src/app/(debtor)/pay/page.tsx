@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { SubmitPaymentForm } from './_components/submit-payment-form'
 
 export default function PayPage() {

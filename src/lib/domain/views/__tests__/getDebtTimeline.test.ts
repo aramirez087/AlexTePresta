@@ -290,4 +290,40 @@ describe('getDebtTimeline', () => {
     const params = makeParams({ interest_debts: [], accruals: [] })
     expect(getDebtTimeline(params)).toEqual([])
   })
+
+  it('sets meta.simulated=true for simulated interest_debt', () => {
+    const params = makeParams({
+      interest_debts: [
+        {
+          id: IDEBT_ID_1,
+          source_installment_id: INST_ID_1,
+          principal_minor: 47875,
+          current_balance_minor: 47875,
+          interest_rate: '0.36',
+          created_at: '2024-06-05T10:02:00Z',
+          is_simulated: true,
+        },
+      ],
+    })
+    const events = getDebtTimeline(params)
+    expect(events[0].meta?.simulated).toBe(true)
+  })
+
+  it('sets meta.simulated=false for real interest_debt', () => {
+    const params = makeParams({
+      interest_debts: [
+        {
+          id: IDEBT_ID_1,
+          source_installment_id: INST_ID_1,
+          principal_minor: 47875,
+          current_balance_minor: 47875,
+          interest_rate: '0.24',
+          created_at: '2024-06-05T10:02:00Z',
+          is_simulated: false,
+        },
+      ],
+    })
+    const events = getDebtTimeline(params)
+    expect(events[0].meta?.simulated).toBe(false)
+  })
 })
