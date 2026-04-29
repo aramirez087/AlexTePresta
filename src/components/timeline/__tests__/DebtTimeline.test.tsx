@@ -125,4 +125,83 @@ describe('DebtTimeline — component tests', () => {
     expect(badge.className).not.toContain('red')
     expect(badge.className).toContain('green')
   })
+
+  it('shows Spanish label "Cuota convertida" for installment_converted event', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'installment_converted',
+        date: new Date('2025-06-01T12:00:00Z'),
+        amount_minor: 147875n,
+        currency: 'CRC',
+        status: 'converted',
+        ref_id: 'inst-converted-1',
+      },
+    ]
+    render(<DebtTimeline events={events} />)
+    expect(screen.getByText('Cuota convertida')).toBeInTheDocument()
+  })
+
+  it('shows Spanish label "Deuda de interés creada" for interest_debt_created event', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-05T10:00:00Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-1',
+      },
+    ]
+    render(<DebtTimeline events={events} />)
+    expect(screen.getByText('Deuda de interés creada')).toBeInTheDocument()
+  })
+
+  it('shows Spanish label "Interés acumulado" for interest_accrued event', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'interest_accrued',
+        date: new Date('2025-07-25T10:00:00Z'),
+        amount_minor: 958n,
+        currency: 'CRC',
+        status: 'applied',
+        ref_id: 'acc-1',
+      },
+    ]
+    render(<DebtTimeline events={events} />)
+    expect(screen.getByText('Interés acumulado')).toBeInTheDocument()
+  })
+})
+
+describe('DebtTimeline — interest event snapshot', () => {
+  it('renders interest conversion and accrual scenario', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'installment_converted',
+        date: new Date('2025-06-01T12:00:00Z'),
+        amount_minor: 147875n,
+        currency: 'CRC',
+        status: 'converted',
+        ref_id: 'inst-converted-1',
+      },
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-01T12:00:01Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-1',
+      },
+      {
+        kind: 'interest_accrued',
+        date: new Date('2025-07-25T10:00:00Z'),
+        amount_minor: 958n,
+        currency: 'CRC',
+        status: 'applied',
+        ref_id: 'acc-1',
+        meta: { period: '2025-07', closing_balance_minor: 48833n },
+      },
+    ]
+    const { container } = render(<DebtTimeline events={events} />)
+    expect(container).toMatchSnapshot()
+  })
 })

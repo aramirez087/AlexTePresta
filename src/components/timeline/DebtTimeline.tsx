@@ -7,6 +7,9 @@ const EVENT_LABELS: Record<TimelineEventKind, string> = {
   installment_due: 'Cuota',
   payment_received: 'Pago recibido',
   payment_application: 'Aplicación de pago',
+  installment_converted: 'Cuota convertida',
+  interest_debt_created: 'Deuda de interés creada',
+  interest_accrued: 'Interés acumulado',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -16,6 +19,8 @@ const STATUS_LABELS: Record<string, string> = {
   converted: 'Convertida',
   approved: 'Aprobado',
   applied: 'Aplicado',
+  active: 'Activa',
+  settled: 'Saldada',
 }
 
 function statusColorClass(status: string): string {
@@ -23,10 +28,13 @@ function statusColorClass(status: string): string {
     case 'paid':
     case 'approved':
     case 'applied':
+    case 'settled':
       return 'text-green-600'
     case 'overdue':
       return 'text-red-600'
     case 'pending':
+    case 'converted':
+    case 'active':
       return 'text-amber-600'
     default:
       return 'text-gray-400'
@@ -38,10 +46,13 @@ function iconBgClass(status: string): string {
     case 'paid':
     case 'approved':
     case 'applied':
+    case 'settled':
       return 'bg-green-100'
     case 'overdue':
       return 'bg-red-100'
     case 'pending':
+    case 'converted':
+    case 'active':
       return 'bg-amber-100'
     default:
       return 'bg-gray-100'
@@ -102,14 +113,37 @@ function CheckCircleIcon({ className }: { className?: string }) {
   )
 }
 
+function BankIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <path
+        fillRule="evenodd"
+        d="M4.5 2A1.5 1.5 0 003 3.5V5h14V3.5A1.5 1.5 0 0015.5 2h-11zM3 6.5V16a1 1 0 001 1h1v-3.5a.5.5 0 011 0V17h2v-3.5a.5.5 0 011 0V17h2v-3.5a.5.5 0 011 0V17h2v-3.5a.5.5 0 011 0V17h1a1 1 0 001-1V6.5H3z"
+        clipRule="evenodd"
+      />
+    </svg>
+  )
+}
+
 function EventIcon({ kind, status }: { kind: TimelineEventKind; status: string }) {
   const colorClass = statusColorClass(status)
   const bgClass = iconBgClass(status)
   return (
     <span className={`flex h-8 w-8 items-center justify-center rounded-full ${bgClass} ${colorClass}`}>
-      {kind === 'installment_due' && <CalendarIcon className="h-4 w-4" />}
+      {(kind === 'installment_due' || kind === 'installment_converted') && (
+        <CalendarIcon className="h-4 w-4" />
+      )}
       {kind === 'payment_received' && <ArrowDownIcon className="h-4 w-4" />}
-      {kind === 'payment_application' && <CheckCircleIcon className="h-4 w-4" />}
+      {(kind === 'payment_application' || kind === 'interest_accrued') && (
+        <CheckCircleIcon className="h-4 w-4" />
+      )}
+      {kind === 'interest_debt_created' && <BankIcon className="h-4 w-4" />}
     </span>
   )
 }
@@ -118,9 +152,7 @@ function StatusBadge({ status }: { status: string }) {
   const label = STATUS_LABELS[status] ?? status
   const colorClass = statusColorClass(status)
   return (
-    <span className={`mt-1 inline-block text-xs font-medium ${colorClass}`}>
-      {label}
-    </span>
+    <span className={`mt-1 inline-block text-xs font-medium ${colorClass}`}>{label}</span>
   )
 }
 
@@ -129,10 +161,7 @@ type Props = {
   emptyMessage?: string
 }
 
-export function DebtTimeline({
-  events,
-  emptyMessage = 'Sin movimientos registrados.',
-}: Props) {
+export function DebtTimeline({ events, emptyMessage = 'Sin movimientos registrados.' }: Props) {
   if (events.length === 0) {
     return (
       <section aria-label="Historial de movimientos">
@@ -153,9 +182,7 @@ export function DebtTimeline({
               )}
             </div>
             <div className="flex-1 pb-4">
-              <p className="text-sm font-medium text-gray-900">
-                {EVENT_LABELS[event.kind]}
-              </p>
+              <p className="text-sm font-medium text-gray-900">{EVENT_LABELS[event.kind]}</p>
               <p className="text-xs text-gray-500">{formatDate(event.date)}</p>
               <p className="mt-1 font-semibold text-gray-900">
                 {formatMoney(event.amount_minor, event.currency)}

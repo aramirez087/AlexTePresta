@@ -1,5 +1,173 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`DebtTimeline — interest event snapshot > renders interest conversion and accrual scenario 1`] = `
+<div>
+  <section
+    aria-label="Historial de movimientos"
+  >
+    <ol
+      class="space-y-0"
+    >
+      <li
+        class="flex gap-4 py-3"
+      >
+        <div
+          class="flex flex-col items-center"
+        >
+          <span
+            class="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100 text-amber-600"
+          >
+            <svg
+              aria-hidden="true"
+              class="h-4 w-4"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                clip-rule="evenodd"
+                d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2zm-1 5.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H4.75z"
+                fill-rule="evenodd"
+              />
+            </svg>
+          </span>
+          <div
+            aria-hidden="true"
+            class="mt-1 w-px flex-1 bg-gray-200"
+          />
+        </div>
+        <div
+          class="flex-1 pb-4"
+        >
+          <p
+            class="text-sm font-medium text-gray-900"
+          >
+            Cuota convertida
+          </p>
+          <p
+            class="text-xs text-gray-500"
+          >
+            1 de junio de 2025
+          </p>
+          <p
+            class="mt-1 font-semibold text-gray-900"
+          >
+            ₡1 478,75
+          </p>
+          <span
+            class="mt-1 inline-block text-xs font-medium text-amber-600"
+          >
+            Convertida
+          </span>
+        </div>
+      </li>
+      <li
+        class="flex gap-4 py-3"
+      >
+        <div
+          class="flex flex-col items-center"
+        >
+          <span
+            class="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100 text-amber-600"
+          >
+            <svg
+              aria-hidden="true"
+              class="h-4 w-4"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                clip-rule="evenodd"
+                d="M4.5 2A1.5 1.5 0 003 3.5V5h14V3.5A1.5 1.5 0 0015.5 2h-11zM3 6.5V16a1 1 0 001 1h1v-3.5a.5.5 0 011 0V17h2v-3.5a.5.5 0 011 0V17h2v-3.5a.5.5 0 011 0V17h2v-3.5a.5.5 0 011 0V17h1a1 1 0 001-1V6.5H3z"
+                fill-rule="evenodd"
+              />
+            </svg>
+          </span>
+          <div
+            aria-hidden="true"
+            class="mt-1 w-px flex-1 bg-gray-200"
+          />
+        </div>
+        <div
+          class="flex-1 pb-4"
+        >
+          <p
+            class="text-sm font-medium text-gray-900"
+          >
+            Deuda de interés creada
+          </p>
+          <p
+            class="text-xs text-gray-500"
+          >
+            1 de junio de 2025
+          </p>
+          <p
+            class="mt-1 font-semibold text-gray-900"
+          >
+            ₡478,75
+          </p>
+          <span
+            class="mt-1 inline-block text-xs font-medium text-amber-600"
+          >
+            Activa
+          </span>
+        </div>
+      </li>
+      <li
+        class="flex gap-4 py-3"
+      >
+        <div
+          class="flex flex-col items-center"
+        >
+          <span
+            class="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 text-green-600"
+          >
+            <svg
+              aria-hidden="true"
+              class="h-4 w-4"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                clip-rule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+                fill-rule="evenodd"
+              />
+            </svg>
+          </span>
+        </div>
+        <div
+          class="flex-1 pb-4"
+        >
+          <p
+            class="text-sm font-medium text-gray-900"
+          >
+            Interés acumulado
+          </p>
+          <p
+            class="text-xs text-gray-500"
+          >
+            25 de julio de 2025
+          </p>
+          <p
+            class="mt-1 font-semibold text-gray-900"
+          >
+            ₡9,58
+          </p>
+          <span
+            class="mt-1 inline-block text-xs font-medium text-green-600"
+          >
+            Aplicado
+          </span>
+        </div>
+      </li>
+    </ol>
+  </section>
+</div>
+`;
+
 exports[`DebtTimeline — snapshots > renders all-paid scenario 1`] = `
 <div>
   <section

@@ -2,6 +2,9 @@ export type TimelineEventKind =
   | 'installment_due'
   | 'payment_received'
   | 'payment_application'
+  | 'installment_converted'
+  | 'interest_debt_created'
+  | 'interest_accrued'
 
 export type TimelineEvent = {
   kind: TimelineEventKind
@@ -40,11 +43,31 @@ type ApplicationRow = {
   created_at: string
 }
 
+type InterestDebtRow = {
+  id: string
+  source_installment_id: string | null
+  principal_minor: number
+  current_balance_minor: number
+  interest_rate: string
+  created_at: string
+}
+
+type AccrualRow = {
+  id: string
+  interest_debt_id: string
+  period: string
+  accrued_amount_minor: number
+  closing_balance_minor: number
+  created_at: string
+}
+
 export type GetDebtTimelineParams = {
   installments: InstallmentRow[]
   payments: PaymentRow[]
   applications: ApplicationRow[]
   currency: 'CRC' | 'USD'
+  interest_debts?: InterestDebtRow[]
+  accruals?: AccrualRow[]
 }
 
 export function getDebtTimeline(params: GetDebtTimelineParams): TimelineEvent[] {
@@ -52,7 +75,7 @@ export function getDebtTimeline(params: GetDebtTimelineParams): TimelineEvent[] 
 
   for (const inst of params.installments) {
     events.push({
-      kind: 'installment_due',
+      kind: inst.status === 'converted' ? 'installment_converted' : 'installment_due',
       // Use noon UTC to keep the date stable across timezones for display
       date: new Date(inst.due_date + 'T12:00:00Z'),
       amount_minor: BigInt(inst.amount_minor),
@@ -87,6 +110,38 @@ export function getDebtTimeline(params: GetDebtTimelineParams): TimelineEvent[] 
       status: 'applied',
       ref_id: app.id,
       meta: { payment_id: app.payment_id, target_id: app.target_id },
+    })
+  }
+
+  for (const idb of params.interest_debts ?? []) {
+    events.push({
+      kind: 'interest_debt_created',
+      date: new Date(idb.created_at),
+      amount_minor: BigInt(idb.principal_minor),
+      currency: params.currency,
+      status: 'active',
+      ref_id: idb.id,
+      meta: {
+        source_installment_id: idb.source_installment_id,
+        interest_rate: idb.interest_rate,
+        current_balance_minor: BigInt(idb.current_balance_minor),
+      },
+    })
+  }
+
+  for (const acc of params.accruals ?? []) {
+    events.push({
+      kind: 'interest_accrued',
+      date: new Date(acc.created_at),
+      amount_minor: BigInt(acc.accrued_amount_minor),
+      currency: params.currency,
+      status: 'applied',
+      ref_id: acc.id,
+      meta: {
+        period: acc.period,
+        closing_balance_minor: BigInt(acc.closing_balance_minor),
+        interest_debt_id: acc.interest_debt_id,
+      },
     })
   }
 

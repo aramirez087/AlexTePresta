@@ -146,12 +146,65 @@ describe('applyPayment — exact amount scenarios', () => {
     expect(result.leftover_minor).toBe(0)
   })
 
-  it('excess in Phase 1: 200000 against 147875 → throws', async () => {
+  it('excess in Phase 2: 200000 against single 147875 installment with no interest_debts → throws', async () => {
     const mock = makeRpcMock({
       data: null,
       error: { message: 'PaymentExcessError: payment x has 52125 minor units unallocated' },
     })
     await expect(applyPayment(mock, PAYMENT_ID)).rejects.toThrow(/excede/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// applyPayment — Phase 2 partial payment scenarios (mock RPC)
+// ---------------------------------------------------------------------------
+describe('applyPayment — Phase 2 partial payment', () => {
+  it('PRD §7: 100000 against 147875 installment → success, no excess error', async () => {
+    // Phase 2: partial payment converts remaining 47875 to interest_debt internally;
+    // the RPC returns the installment application only (conversion is a DB side-effect)
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 100000 },
+      ],
+      leftover_minor: 0,
+    }
+    const mock = makeRpcMock({ data: successData, error: null })
+    const result = await applyPayment(mock, PAYMENT_ID)
+    expect(result.leftover_minor).toBe(0)
+    expect(result.applications).toHaveLength(1)
+    expect(result.applications[0].target_type).toBe('installment')
+    expect(result.applications[0].applied_amount_minor).toBe(100000)
+  })
+
+  it('interest_debt FIFO: payment applied to interest_debt returns target_type=interest_debt', async () => {
+    const INTEREST_DEBT_ID = '00000000-0000-0000-0000-000000000099'
+    const successData = {
+      applications: [
+        { target_id: INTEREST_DEBT_ID, target_type: 'interest_debt', applied_amount_minor: 47875 },
+      ],
+      leftover_minor: 0,
+    }
+    const mock = makeRpcMock({ data: successData, error: null })
+    const result = await applyPayment(mock, PAYMENT_ID)
+    expect(result.applications[0].target_type).toBe('interest_debt')
+    expect(result.applications[0].applied_amount_minor).toBe(47875)
+  })
+
+  it('mixed: installment + interest_debt applications in single payment', async () => {
+    const INTEREST_DEBT_ID = '00000000-0000-0000-0000-000000000099'
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 147875 },
+        { target_id: INTEREST_DEBT_ID, target_type: 'interest_debt', applied_amount_minor: 47875 },
+      ],
+      leftover_minor: 0,
+    }
+    const mock = makeRpcMock({ data: successData, error: null })
+    const result = await applyPayment(mock, PAYMENT_ID)
+    expect(result.applications).toHaveLength(2)
+    expect(result.applications[0].target_type).toBe('installment')
+    expect(result.applications[1].target_type).toBe('interest_debt')
+    expect(result.leftover_minor).toBe(0)
   })
 })
 
