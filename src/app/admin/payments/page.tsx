@@ -1,11 +1,14 @@
+import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdmin } from '@/lib/auth/session'
 import { ApproveButton } from './_components/approve-button'
+import { formatMoney } from '@/lib/format/money'
+import { formatDate } from '@/lib/format/date'
 
 type PendingPayment = {
   id: string
   debtor_id: string
-  currency: string
+  currency: 'CRC' | 'USD'
   amount_minor: number
   notes: string | null
   created_at: string
@@ -16,19 +19,6 @@ type PendingPayment = {
     remaining_amount_minor: number
     sequence_number: number
   }[]
-}
-
-function formatAmount(minor: number, currency: string) {
-  const major = minor / 100
-  return new Intl.NumberFormat('es-CR', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-  }).format(major)
-}
-
-function formatDate(iso: string) {
-  return new Intl.DateTimeFormat('es-CR', { dateStyle: 'medium' }).format(new Date(iso))
 }
 
 export default async function AdminPaymentsPage() {
@@ -44,6 +34,11 @@ export default async function AdminPaymentsPage() {
   if (!payments || payments.length === 0) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-10">
+        <div className="mb-4">
+          <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+            ← Deudores
+          </Link>
+        </div>
         <h1 className="mb-6 text-2xl font-bold text-gray-900">Pagos pendientes</h1>
         <p className="text-gray-500">No hay pagos pendientes de aprobación.</p>
       </main>
@@ -88,12 +83,18 @@ export default async function AdminPaymentsPage() {
           sequence_number,
         }))
 
-      return { ...p, debtor_email, preview_installments }
+      // boundary: DB currency column is untyped string; domain only uses CRC/USD
+      return { ...p, currency: p.currency as 'CRC' | 'USD', debtor_email, preview_installments }
     }),
   )
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-10">
+      <div className="mb-4">
+        <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+          ← Deudores
+        </Link>
+      </div>
       <h1 className="mb-6 text-2xl font-bold text-gray-900">Pagos pendientes</h1>
       <div className="space-y-6">
         {enriched.map((p) => (
@@ -102,8 +103,8 @@ export default async function AdminPaymentsPage() {
               <div>
                 <p className="font-semibold text-gray-900">{p.debtor_email}</p>
                 <p className="text-sm text-gray-500">
-                  {formatAmount(p.amount_minor, p.currency)} · {p.currency} ·{' '}
-                  {formatDate(p.created_at)}
+                  {formatMoney(BigInt(p.amount_minor), p.currency)} · {p.currency} ·{' '}
+                  {formatDate(new Date(p.created_at))}
                 </p>
                 {p.notes && <p className="mt-1 text-sm text-gray-600">{p.notes}</p>}
               </div>
@@ -127,9 +128,11 @@ export default async function AdminPaymentsPage() {
                     {p.preview_installments.map((i) => (
                       <tr key={i.id} className="border-b border-gray-50">
                         <td className="py-1 pr-4 text-gray-700">{i.sequence_number}</td>
-                        <td className="py-1 pr-4 text-gray-700">{formatDate(i.due_date)}</td>
+                        <td className="py-1 pr-4 text-gray-700">
+                          {formatDate(new Date(i.due_date + 'T12:00:00Z'))}
+                        </td>
                         <td className="py-1 text-right text-gray-700">
-                          {formatAmount(i.remaining_amount_minor, p.currency)}
+                          {formatMoney(BigInt(i.remaining_amount_minor), p.currency)}
                         </td>
                       </tr>
                     ))}

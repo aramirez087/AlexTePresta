@@ -2,19 +2,13 @@ import Link from 'next/link'
 import { requireAdmin } from '@/lib/auth/session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
+import { formatMoney } from '@/lib/format/money'
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pendiente',
   paid: 'Pagado',
   converted: 'Convertida',
   overdue: 'Vencida',
-}
-
-function formatMoney(amountMinor: number, currency: string): string {
-  return new Intl.NumberFormat('es-CR', {
-    style: 'currency',
-    currency,
-  }).format(amountMinor / 100)
 }
 
 export default async function DebtDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -46,7 +40,8 @@ export default async function DebtDetailPage({ params }: { params: Promise<{ id:
     .filter((i) => i.status !== 'paid')
     .reduce((sum, i) => sum + BigInt(i.remaining_amount_minor), 0n)
 
-  const currency = debt.currency
+  // boundary: DB currency column is untyped string; domain only uses CRC/USD
+  const currency = debt.currency as 'CRC' | 'USD'
 
   // boundary: debtor is a joined row — Supabase returns it as an object, not typed by default
   const debtor = debt.debtor as { email: string } | null
@@ -78,7 +73,7 @@ export default async function DebtDetailPage({ params }: { params: Promise<{ id:
           </div>
           <div>
             <dt className="font-medium text-gray-500">Monto total</dt>
-            <dd className="text-gray-900">{formatMoney(debt.total_amount_minor, currency)}</dd>
+            <dd className="text-gray-900">{formatMoney(BigInt(debt.total_amount_minor), currency)}</dd>
           </div>
           <div>
             <dt className="font-medium text-gray-500">Cuotas</dt>
@@ -95,19 +90,19 @@ export default async function DebtDetailPage({ params }: { params: Promise<{ id:
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-medium text-gray-500">Pagado</p>
           <p className="mt-1 text-lg font-semibold text-green-600">
-            {formatMoney(Number(paid), currency)}
+            {formatMoney(paid, currency)}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-medium text-gray-500">Pendiente</p>
           <p className="mt-1 text-lg font-semibold text-amber-600">
-            {formatMoney(Number(pending), currency)}
+            {formatMoney(pending, currency)}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-medium text-gray-500">Total</p>
           <p className="mt-1 text-lg font-semibold text-gray-900">
-            {formatMoney(debt.total_amount_minor, currency)}
+            {formatMoney(BigInt(debt.total_amount_minor), currency)}
           </p>
         </div>
       </div>
@@ -136,10 +131,10 @@ export default async function DebtDetailPage({ params }: { params: Promise<{ id:
                   }).format(new Date(installment.due_date))}
                 </td>
                 <td className="px-4 py-3 text-right text-sm text-gray-900">
-                  {formatMoney(installment.amount_minor, currency)}
+                  {formatMoney(BigInt(installment.amount_minor), currency)}
                 </td>
                 <td className="px-4 py-3 text-right text-sm text-gray-900">
-                  {formatMoney(installment.remaining_amount_minor, currency)}
+                  {formatMoney(BigInt(installment.remaining_amount_minor), currency)}
                 </td>
                 <td className="px-4 py-3 text-sm">
                   <span

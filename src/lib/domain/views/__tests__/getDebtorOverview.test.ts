@@ -1,0 +1,159 @@
+// @vitest-environment node
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+
+import { getDebtorOverview } from '../getDebtorOverview'
+import type { createAdminClient } from '@/lib/supabase/admin'
+
+const DEBTOR_ID = '00000000-0000-0000-0099-000000000001'
+const DEBT_ID_CRC = '00000000-0000-0000-0001-000000000001'
+const DEBT_ID_USD = '00000000-0000-0000-0001-000000000002'
+const INST_ID_1 = '00000000-0000-0000-0002-000000000001'
+const INST_ID_2 = '00000000-0000-0000-0002-000000000002'
+
+type MockDebt = {
+  id: string
+  currency: string
+  description: string | null
+  total_amount_minor: number
+  total_installments: number
+  installment_amount_minor: number
+  status: string
+}
+
+type MockInstallment = {
+  id: string
+  due_date: string
+  amount_minor: number
+  remaining_amount_minor: number
+  status: string
+  sequence_number: number
+  debt_id: string
+}
+
+function makeAdminClient(debts: MockDebt[], installments: MockInstallment[]): ReturnType<typeof createAdminClient> {
+  const installmentsOrderSeq = vi.fn().mockResolvedValue({ data: installments, error: null })
+  const installmentsOrderDate = vi.fn().mockReturnValue({ order: installmentsOrderSeq })
+  const installmentsIn = vi.fn().mockReturnValue({ order: installmentsOrderDate })
+  const installmentsSelect = vi.fn().mockReturnValue({ in: installmentsIn })
+
+  const debtsEq2 = vi.fn().mockResolvedValue({ data: debts, error: null })
+  const debtsEq1 = vi.fn().mockReturnValue({ eq: debtsEq2 })
+  const debtsSelect = vi.fn().mockReturnValue({ eq: debtsEq1 })
+
+  const from = vi.fn().mockImplementation((table: string) => {
+    if (table === 'debts') return { select: debtsSelect }
+    if (table === 'installments') return { select: installmentsSelect }
+    return { select: vi.fn() }
+  })
+
+  // boundary: mock object — vitest mock of Supabase admin client shape
+  return { from } as unknown as ReturnType<typeof createAdminClient>
+}
+
+describe('getDebtorOverview', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns empty result when debtor has no active debts', async () => {
+    const client = makeAdminClient([], [])
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.debts).toHaveLength(0)
+    expect(result.total_owed_by_currency.CRC).toBe(0n)
+    expect(result.total_owed_by_currency.USD).toBe(0n)
+    expect(result.status).toBe('al_dia')
+    expect(result.next_installment).toBeNull()
+  })
+
+  it('computes total_owed for CRC debt with pending installments', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: 'Préstamo', total_amount_minor: 300000, total_installments: 3, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2025-06-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 1, debt_id: DEBT_ID_CRC },
+      { id: INST_ID_2, due_date: '2025-07-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 2, debt_id: DEBT_ID_CRC },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.total_owed_by_currency.CRC).toBe(200000n)
+  })
+
+  it('includes paid amount in total_paid_by_currency', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 200000, total_installments: 2, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2025-04-01', amount_minor: 100000, remaining_amount_minor: 0, status: 'paid', sequence_number: 1, debt_id: DEBT_ID_CRC },
+      { id: INST_ID_2, due_date: '2025-05-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 2, debt_id: DEBT_ID_CRC },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.total_paid_by_currency.CRC).toBe(100000n)
+    expect(result.total_owed_by_currency.CRC).toBe(100000n)
+  })
+
+  it('returns atrasado when installment due_date is in the past', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 100000, total_installments: 1, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2020-01-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'overdue', sequence_number: 1, debt_id: DEBT_ID_CRC },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.status).toBe('atrasado')
+  })
+
+  it('returns al_dia when all installments are in the future', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 100000, total_installments: 1, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2099-01-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 1, debt_id: DEBT_ID_CRC },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.status).toBe('al_dia')
+  })
+
+  it('next_installment points to the earliest pending installment', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 200000, total_installments: 2, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2025-06-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 1, debt_id: DEBT_ID_CRC },
+      { id: INST_ID_2, due_date: '2025-07-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 2, debt_id: DEBT_ID_CRC },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.next_installment?.due_date).toBe('2025-06-01')
+  })
+
+  it('populates both CRC and USD totals for multi-currency debtor', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 100000, total_installments: 1, installment_amount_minor: 100000, status: 'active' },
+      { id: DEBT_ID_USD, currency: 'USD', description: null, total_amount_minor: 50000, total_installments: 1, installment_amount_minor: 50000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2025-06-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 1, debt_id: DEBT_ID_CRC },
+      { id: INST_ID_2, due_date: '2025-06-01', amount_minor: 50000, remaining_amount_minor: 50000, status: 'pending', sequence_number: 1, debt_id: DEBT_ID_USD },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.total_owed_by_currency.CRC).toBe(100000n)
+    expect(result.total_owed_by_currency.USD).toBe(50000n)
+  })
+
+  it('total_owed_by_currency values are bigint', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 100000, total_installments: 1, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2025-06-01', amount_minor: 100000, remaining_amount_minor: 100000, status: 'pending', sequence_number: 1, debt_id: DEBT_ID_CRC },
+    ]
+    const client = makeAdminClient(debts, installments)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(typeof result.total_owed_by_currency.CRC).toBe('bigint')
+    expect(typeof result.total_owed_by_currency.USD).toBe('bigint')
+  })
+})

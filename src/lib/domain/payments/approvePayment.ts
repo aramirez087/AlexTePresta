@@ -1,4 +1,5 @@
 'use server'
+import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { action } from '@/lib/safe-action'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -14,5 +15,8 @@ export const approvePayment = action
   .action(async ({ parsedInput: { payment_id } }) => {
     await requireAdmin()
     const admin = createAdminClient()
-    return await applyPayment(admin, payment_id)
+    const result = await applyPayment(admin, payment_id)
+    revalidatePath('/admin')
+    revalidatePath('/admin/payments')
+    return result
   })
