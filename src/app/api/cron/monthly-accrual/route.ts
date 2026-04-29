@@ -23,9 +23,10 @@ export async function GET(request: NextRequest) {
   const admin = createAdminClient()
 
   try {
-    const summary = await runMonthlyAccrual(admin, period)
-    console.log(`[cron/monthly-accrual] period=${period}`, summary)
-    return NextResponse.json({ period, ...summary })
+    const realSummary = await runMonthlyAccrual(admin, period, 'real')
+    const simSummary = await runMonthlyAccrual(admin, period, 'simulated')
+    console.log(`[cron/monthly-accrual] period=${period}`, { real: realSummary, simulated: simSummary })
+    return NextResponse.json({ period, real: realSummary, simulated: simSummary })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[cron/monthly-accrual] fatal:', message)

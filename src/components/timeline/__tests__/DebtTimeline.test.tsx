@@ -205,3 +205,79 @@ describe('DebtTimeline — interest event snapshot', () => {
     expect(container).toMatchSnapshot()
   })
 })
+
+describe('DebtTimeline — simulated event styling', () => {
+  it('renders amber dashed border for simulated interest_debt event', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-05T10:00:00Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-sim-1',
+        meta: { simulated: true },
+      },
+    ]
+    const { container } = render(<DebtTimeline events={events} />)
+    const li = container.querySelector('li')
+    expect(li?.className).toContain('border-dashed')
+    expect(li?.className).toContain('border-amber-400')
+  })
+
+  it('renders "Simulado" label for simulated events', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-05T10:00:00Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-sim-2',
+        meta: { simulated: true },
+      },
+    ]
+    render(<DebtTimeline events={events} />)
+    expect(screen.getByText('Simulado')).toBeInTheDocument()
+  })
+
+  it('does NOT render dashed border for non-simulated events', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-05T10:00:00Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-real-1',
+      },
+    ]
+    const { container } = render(<DebtTimeline events={events} />)
+    const li = container.querySelector('li')
+    expect(li?.className).not.toContain('border-dashed')
+  })
+
+  it('renders snapshot with mixed real and simulated events', () => {
+    const events: TimelineEvent[] = [
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-05T10:00:00Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-real-snap',
+      },
+      {
+        kind: 'interest_debt_created',
+        date: new Date('2025-06-05T10:00:01Z'),
+        amount_minor: 47875n,
+        currency: 'CRC',
+        status: 'active',
+        ref_id: 'idebt-sim-snap',
+        meta: { simulated: true },
+      },
+    ]
+    const { container } = render(<DebtTimeline events={events} />)
+    expect(container).toMatchSnapshot()
+  })
+})

@@ -22,10 +22,22 @@ const INSTALLMENT_ID_1 = '00000000-0000-0000-0000-000000000011'
 const INSTALLMENT_ID_2 = '00000000-0000-0000-0000-000000000012'
 const DEBT_ID = '00000000-0000-0000-0000-000000000001'
 
+// Chainable from mock that returns empty interest_debts so simulation path is a no-op.
+// Used in tests that only care about the RPC result, not mirror creation.
+function makeEmptyFromMock() {
+  const isResolved = vi.fn().mockResolvedValue({ data: [], error: null })
+  const eqSim = vi.fn().mockReturnValue({ is: isResolved })
+  const inIds = vi.fn().mockReturnValue({ eq: eqSim })
+  const select = vi.fn().mockReturnValue({ in: inIds })
+  const from = vi.fn().mockReturnValue({ select })
+  return from
+}
+
 function makeRpcMock(result: { data: unknown; error: null | { message: string } }) {
   const rpc = vi.fn().mockResolvedValue(result)
+  const from = makeEmptyFromMock()
   // boundary: mock object — vitest mock of Supabase admin client shape
-  return { rpc } as unknown as ReturnType<typeof createAdminClient>
+  return { rpc, from } as unknown as ReturnType<typeof createAdminClient>
 }
 
 function makeAdminClientMock(opts: {
@@ -209,6 +221,215 @@ describe('applyPayment — Phase 2 partial payment', () => {
 })
 
 // ---------------------------------------------------------------------------
+// applyPayment — simulated mirror creation
+// ---------------------------------------------------------------------------
+describe('applyPayment — simulated mirror creation', () => {
+  const REAL_DEBT_ID = '00000000-0000-0000-0005-000000000001'
+
+  it('creates simulated mirror when partial payment triggers conversion', async () => {
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 100000 },
+      ],
+      leftover_minor: 0,
+    }
+
+    let mirrorInsertCapture: Record<string, unknown> | null = null
+
+    // Chain: interest_debts real query → returns one real debt
+    const isResolved = vi.fn().mockResolvedValue({
+      data: [{
+        id: REAL_DEBT_ID,
+        debt_id: DEBT_ID,
+        source_installment_id: INSTALLMENT_ID_1,
+        principal_minor: 47875,
+        interest_rate: '0.24',
+      }],
+      error: null,
+    })
+    const eqSimFalse = vi.fn().mockReturnValue({ is: isResolved })
+    const inIds = vi.fn().mockReturnValue({ eq: eqSimFalse })
+    const selectRealDebts = vi.fn().mockReturnValue({ in: inIds })
+
+    // payments query → returns debtor_id
+    const paymentSingle = vi.fn().mockResolvedValue({ data: { debtor_id: DEBTOR_ID }, error: null })
+    const eqPaymentId = vi.fn().mockReturnValue({ single: paymentSingle })
+    const selectPayment = vi.fn().mockReturnValue({ eq: eqPaymentId })
+
+    // existing mirror check → returns null (no existing mirror)
+    const mirrorMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const eqMirrorOf = vi.fn().mockReturnValue({ maybeSingle: mirrorMaybeSingle })
+    const selectMirrorCheck = vi.fn().mockReturnValue({ eq: eqMirrorOf })
+
+    // user_simulation_overrides query → no override
+    const overrideMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const eqOverrideUser = vi.fn().mockReturnValue({ maybeSingle: overrideMaybeSingle })
+    const selectOverride = vi.fn().mockReturnValue({ eq: eqOverrideUser })
+
+    // settings query → returns simulated rate '0.36'
+    const settingMaybeSingle = vi.fn().mockResolvedValue({ data: { value: '0.36' }, error: null })
+    const eqSettingKey = vi.fn().mockReturnValue({ maybeSingle: settingMaybeSingle })
+    const selectSetting = vi.fn().mockReturnValue({ eq: eqSettingKey })
+
+    // mirror insert
+    const insertMirror = vi.fn().mockImplementation((row: Record<string, unknown>) => {
+      mirrorInsertCapture = row
+      return Promise.resolve({ error: null })
+    })
+
+    let fromCallCount = 0
+    const from = vi.fn().mockImplementation((table: string) => {
+      fromCallCount++
+      if (table === 'interest_debts' && fromCallCount === 1) return { select: selectRealDebts }
+      if (table === 'payments') return { select: selectPayment }
+      if (table === 'interest_debts' && fromCallCount === 3) return { select: selectMirrorCheck }
+      if (table === 'user_simulation_overrides') return { select: selectOverride }
+      if (table === 'settings') return { select: selectSetting }
+      if (table === 'interest_debts') return { insert: insertMirror }
+      return {}
+    })
+
+    const rpc = vi.fn().mockResolvedValue({ data: successData, error: null })
+    // boundary: mock object — vitest mock of Supabase admin client shape
+    const mock = { rpc, from } as unknown as ReturnType<typeof createAdminClient>
+
+    await applyPayment(mock, PAYMENT_ID)
+
+    expect(mirrorInsertCapture).not.toBeNull()
+    expect(mirrorInsertCapture!['is_simulated']).toBe(true)
+    expect(mirrorInsertCapture!['mirror_of']).toBe(REAL_DEBT_ID)
+    expect(mirrorInsertCapture!['interest_rate']).toBe('0.36')
+    expect(mirrorInsertCapture!['principal_minor']).toBe(47875)
+  })
+
+  it('skips mirror creation when mirror already exists', async () => {
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 100000 },
+      ],
+      leftover_minor: 0,
+    }
+
+    let mirrorInsertCalled = false
+
+    const isResolved = vi.fn().mockResolvedValue({
+      data: [{
+        id: REAL_DEBT_ID,
+        debt_id: DEBT_ID,
+        source_installment_id: INSTALLMENT_ID_1,
+        principal_minor: 47875,
+        interest_rate: '0.24',
+      }],
+      error: null,
+    })
+    const eqSimFalse = vi.fn().mockReturnValue({ is: isResolved })
+    const inIds = vi.fn().mockReturnValue({ eq: eqSimFalse })
+    const selectRealDebts = vi.fn().mockReturnValue({ in: inIds })
+
+    const paymentSingle = vi.fn().mockResolvedValue({ data: { debtor_id: DEBTOR_ID }, error: null })
+    const eqPaymentId = vi.fn().mockReturnValue({ single: paymentSingle })
+    const selectPayment = vi.fn().mockReturnValue({ eq: eqPaymentId })
+
+    // existing mirror check → returns existing mirror
+    const mirrorMaybeSingle = vi.fn().mockResolvedValue({ data: { id: 'existing-mirror-uuid' }, error: null })
+    const eqMirrorOf = vi.fn().mockReturnValue({ maybeSingle: mirrorMaybeSingle })
+    const selectMirrorCheck = vi.fn().mockReturnValue({ eq: eqMirrorOf })
+
+    const insertMirror = vi.fn().mockImplementation(() => {
+      mirrorInsertCalled = true
+      return Promise.resolve({ error: null })
+    })
+
+    let fromCallCount = 0
+    const from = vi.fn().mockImplementation((table: string) => {
+      fromCallCount++
+      if (table === 'interest_debts' && fromCallCount === 1) return { select: selectRealDebts }
+      if (table === 'payments') return { select: selectPayment }
+      if (table === 'interest_debts') return { select: selectMirrorCheck, insert: insertMirror }
+      return {}
+    })
+
+    const rpc = vi.fn().mockResolvedValue({ data: successData, error: null })
+    // boundary: mock object — vitest mock of Supabase admin client shape
+    const mock = { rpc, from } as unknown as ReturnType<typeof createAdminClient>
+
+    await applyPayment(mock, PAYMENT_ID)
+
+    expect(mirrorInsertCalled).toBe(false)
+  })
+
+  it('uses real rate as fallback when no override and no settings value found', async () => {
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 100000 },
+      ],
+      leftover_minor: 0,
+    }
+
+    let mirrorInsertCapture: Record<string, unknown> | null = null
+
+    const isResolved = vi.fn().mockResolvedValue({
+      data: [{
+        id: REAL_DEBT_ID,
+        debt_id: DEBT_ID,
+        source_installment_id: INSTALLMENT_ID_1,
+        principal_minor: 47875,
+        interest_rate: '0.24',
+      }],
+      error: null,
+    })
+    const eqSimFalse = vi.fn().mockReturnValue({ is: isResolved })
+    const inIds = vi.fn().mockReturnValue({ eq: eqSimFalse })
+    const selectRealDebts = vi.fn().mockReturnValue({ in: inIds })
+
+    const paymentSingle = vi.fn().mockResolvedValue({ data: { debtor_id: DEBTOR_ID }, error: null })
+    const eqPaymentId = vi.fn().mockReturnValue({ single: paymentSingle })
+    const selectPayment = vi.fn().mockReturnValue({ eq: eqPaymentId })
+
+    const mirrorMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const eqMirrorOf = vi.fn().mockReturnValue({ maybeSingle: mirrorMaybeSingle })
+    const selectMirrorCheck = vi.fn().mockReturnValue({ eq: eqMirrorOf })
+
+    // No user override
+    const overrideMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const eqOverrideUser = vi.fn().mockReturnValue({ maybeSingle: overrideMaybeSingle })
+    const selectOverride = vi.fn().mockReturnValue({ eq: eqOverrideUser })
+
+    // No settings value either
+    const settingMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const eqSettingKey = vi.fn().mockReturnValue({ maybeSingle: settingMaybeSingle })
+    const selectSetting = vi.fn().mockReturnValue({ eq: eqSettingKey })
+
+    const insertMirror = vi.fn().mockImplementation((row: Record<string, unknown>) => {
+      mirrorInsertCapture = row
+      return Promise.resolve({ error: null })
+    })
+
+    let fromCallCount = 0
+    const from = vi.fn().mockImplementation((table: string) => {
+      fromCallCount++
+      if (table === 'interest_debts' && fromCallCount === 1) return { select: selectRealDebts }
+      if (table === 'payments') return { select: selectPayment }
+      if (table === 'interest_debts' && fromCallCount === 3) return { select: selectMirrorCheck }
+      if (table === 'user_simulation_overrides') return { select: selectOverride }
+      if (table === 'settings') return { select: selectSetting }
+      if (table === 'interest_debts') return { insert: insertMirror }
+      return {}
+    })
+
+    const rpc = vi.fn().mockResolvedValue({ data: successData, error: null })
+    // boundary: mock object — vitest mock of Supabase admin client shape
+    const mock = { rpc, from } as unknown as ReturnType<typeof createAdminClient>
+
+    await applyPayment(mock, PAYMENT_ID)
+
+    expect(mirrorInsertCapture).not.toBeNull()
+    // Falls back to real debt's rate '0.24'
+    expect(mirrorInsertCapture!['interest_rate']).toBe('0.24')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // submitPayment — auth guard
 // ---------------------------------------------------------------------------
 describe('submitPayment — auth guard', () => {
@@ -364,7 +585,12 @@ describe('registerPaymentDirect — success', () => {
     const eqCurrency = vi.fn().mockReturnValue({ eq: eqStatus })
     const eqDebtor = vi.fn().mockReturnValue({ eq: eqCurrency })
     const selectDebts = vi.fn().mockReturnValue({ eq: eqDebtor })
-    const from = vi.fn().mockReturnValue({ select: selectDebts, insert })
+    // interest_debts query from applyPayment simulation path → no real debts found (no-op)
+    const emptyFrom = makeEmptyFromMock()
+    const from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'interest_debts') return emptyFrom(table)
+      return { select: selectDebts, insert }
+    })
     // boundary: mock object — vitest mock of Supabase admin client shape
     const mock = { from, rpc } as unknown as ReturnType<typeof createAdminClient>
     vi.mocked(createAdminClient).mockReturnValue(mock)

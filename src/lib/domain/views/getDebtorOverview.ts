@@ -21,7 +21,8 @@ export type DebtorOverview = {
   debts: DebtSummary[]
   total_owed_by_currency: { CRC: bigint; USD: bigint }
   total_paid_by_currency: { CRC: bigint; USD: bigint }
-  interest_debt_balance_by_currency: { CRC: bigint; USD: bigint }
+  real_balance_by_currency: { CRC: bigint; USD: bigint }
+  simulated_balance_by_currency: { CRC: bigint; USD: bigint }
   next_installment: {
     due_date: string
     amount_minor: bigint
@@ -47,7 +48,8 @@ export async function getDebtorOverview(
       debts: [],
       total_owed_by_currency: { CRC: 0n, USD: 0n },
       total_paid_by_currency: { CRC: 0n, USD: 0n },
-      interest_debt_balance_by_currency: { CRC: 0n, USD: 0n },
+      real_balance_by_currency: { CRC: 0n, USD: 0n },
+      simulated_balance_by_currency: { CRC: 0n, USD: 0n },
       next_installment: null,
       status: 'al_dia',
     }
@@ -69,14 +71,23 @@ export async function getDebtorOverview(
     .eq('is_simulated', false)
     .eq('status', 'active')
 
+  const { data: simulatedDebtsData } = await adminClient
+    .from('interest_debts')
+    .select('id, debt_id, current_balance_minor')
+    .in('debt_id', debtIds)
+    .eq('is_simulated', true)
+    .eq('status', 'active')
+
   const allInstallments = installmentsData ?? []
   const activeInterestDebts = interestDebtsData ?? []
+  const activeSimulatedDebts = simulatedDebtsData ?? []
 
   const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Costa_Rica' }).format(new Date())
 
   const totalOwed: { CRC: bigint; USD: bigint } = { CRC: 0n, USD: 0n }
   const totalPaid: { CRC: bigint; USD: bigint } = { CRC: 0n, USD: 0n }
   const interestDebtOwed: { CRC: bigint; USD: bigint } = { CRC: 0n, USD: 0n }
+  const simulatedOwed: { CRC: bigint; USD: bigint } = { CRC: 0n, USD: 0n }
   let isAtrasado = false
   let nextInstallmentDate: string | null = null
   let nextInstallmentAmount: bigint | null = null
@@ -127,6 +138,14 @@ export async function getDebtorOverview(
     totalOwed[currency] += balance
   }
 
+  for (const idb of activeSimulatedDebts) {
+    const debt = debtMap.get(idb.debt_id)
+    if (!debt) continue
+    const currency = debt.currency as 'CRC' | 'USD'
+    // boundary: DB returns number for bigint column; domain amounts < MAX_SAFE_INTEGER
+    simulatedOwed[currency] += BigInt(idb.current_balance_minor)
+  }
+
   const debts: DebtSummary[] = activeDebts.map((d) => {
     const currency = d.currency as 'CRC' | 'USD'
     const firstPending = debtFirstPending.get(d.id) ?? null
@@ -153,7 +172,8 @@ export async function getDebtorOverview(
     debts,
     total_owed_by_currency: totalOwed,
     total_paid_by_currency: totalPaid,
-    interest_debt_balance_by_currency: interestDebtOwed,
+    real_balance_by_currency: interestDebtOwed,
+    simulated_balance_by_currency: simulatedOwed,
     next_installment:
       nextInstallmentDate && nextInstallmentAmount !== null && nextInstallmentCurrency
         ? { due_date: nextInstallmentDate, amount_minor: nextInstallmentAmount, currency: nextInstallmentCurrency }

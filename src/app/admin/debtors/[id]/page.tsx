@@ -11,11 +11,15 @@ import { formatMoney } from '@/lib/format/money'
 
 export default async function AdminDebtorDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ mode?: string }>
 }) {
   await requireAdmin()
   const { id } = await params
+  const { mode } = await searchParams
+  const isSimulatedMode = mode === 'simulada'
   const admin = createAdminClient()
 
   const { data: debtor } = await admin
@@ -32,7 +36,7 @@ export default async function AdminDebtorDetailPage({
 
   const debtIds = overview.debts.map((d) => d.id)
 
-  const [installmentsRes, paymentsRes] = await Promise.all([
+  const [installmentsRes, paymentsRes, interestDebtsRes] = await Promise.all([
     debtIds.length > 0
       ? admin
           .from('installments')
@@ -46,6 +50,13 @@ export default async function AdminDebtorDetailPage({
       .eq('debtor_id', id)
       .in('status', ['pending', 'approved'])
       .order('created_at', { ascending: true }),
+    debtIds.length > 0
+      ? admin
+          .from('interest_debts')
+          .select('id, debt_id, source_installment_id, principal_minor, current_balance_minor, interest_rate, created_at, is_simulated')
+          .in('debt_id', debtIds)
+          .order('created_at', { ascending: true })
+      : Promise.resolve({ data: [] }),
   ])
 
   const allPayments = paymentsRes.data ?? []
@@ -59,6 +70,19 @@ export default async function AdminDebtorDetailPage({
           .in('payment_id', paymentIds)
           .order('created_at', { ascending: true })
       : { data: [] }
+
+  const allInterestDebts = interestDebtsRes.data ?? []
+
+  const accrualsRes =
+    allInterestDebts.length > 0
+      ? await admin
+          .from('interest_accruals')
+          .select('id, interest_debt_id, period, accrued_amount_minor, closing_balance_minor, created_at')
+          .in('interest_debt_id', allInterestDebts.map((d) => d.id))
+          .order('created_at', { ascending: true })
+      : { data: [] }
+
+  const allAccruals = accrualsRes.data ?? []
 
   const currencies = [...new Set(overview.debts.map((d) => d.currency))] as ('CRC' | 'USD')[]
 
@@ -74,15 +98,27 @@ export default async function AdminDebtorDetailPage({
     const applications = (applicationsRes.data ?? []).filter((a) =>
       paymentIdSet.has(a.payment_id),
     )
-    const events = getDebtTimeline({ installments, payments, applications, currency })
+    const interest_debts = allInterestDebts.filter((d) => currencyDebtIds.has(d.debt_id ?? ''))
+    const accruals = allAccruals.filter((a) =>
+      interest_debts.some((d) => d.id === a.interest_debt_id),
+    )
+    const events = getDebtTimeline({ installments, payments, applications, currency, interest_debts, accruals })
     return { currency, events }
   })
 
   const crc = overview.total_owed_by_currency.CRC
   const usd = overview.total_owed_by_currency.USD
+  const crcSim = overview.simulated_balance_by_currency.CRC
+  const usdSim = overview.simulated_balance_by_currency.USD
 
   return (
     <main className="mx-auto max-w-4xl p-6">
+      {isSimulatedMode && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+          Escenario simulado — no afecta lo que debes
+        </div>
+      )}
+
       <div className="mb-6">
         <Link href="/admin" className="text-sm text-blue-600 hover:underline">
           ← Volver a deudores
@@ -93,15 +129,33 @@ export default async function AdminDebtorDetailPage({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold text-gray-900">{debtorRow.email}</h1>
-            <div className="mt-2 flex gap-4 text-sm text-gray-600">
+            <div className="mt-2 flex flex-wrap gap-4 text-sm text-gray-600">
               {crc > 0n && <span>Saldo CRC: {formatMoney(crc, 'CRC')}</span>}
               {usd > 0n && <span>Saldo USD: {formatMoney(usd, 'USD')}</span>}
               {crc === 0n && usd === 0n && (
                 <span className="text-green-600">Sin saldo pendiente</span>
               )}
+              {isSimulatedMode && crcSim > 0n && (
+                <span className="text-amber-600">Simulado CRC: {formatMoney(crcSim, 'CRC')}</span>
+              )}
+              {isSimulatedMode && usdSim > 0n && (
+                <span className="text-amber-600">Simulado USD: {formatMoney(usdSim, 'USD')}</span>
+              )}
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <Link
+              href={isSimulatedMode ? `/admin/debtors/${id}` : `/admin/debtors/${id}?mode=simulada`}
+              className="text-xs text-amber-600 hover:underline"
+            >
+              {isSimulatedMode ? 'Ver datos reales' : 'Ver escenario simulado'}
+            </Link>
+            <Link
+              href={`/admin/debtors/${id}/scenarios`}
+              className="text-xs text-gray-500 hover:underline"
+            >
+              Proyección
+            </Link>
             {overview.status === 'al_dia' ? (
               <span className="inline-flex rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700">
                 Al día

@@ -12,11 +12,12 @@ export type AccrualSummary = {
 export async function runMonthlyAccrual(
   adminClient: ReturnType<typeof createAdminClient>,
   period: string,
+  mode: 'real' | 'simulated' = 'real',
 ): Promise<AccrualSummary> {
   const { data: debts } = await adminClient
     .from('interest_debts')
     .select('id, current_balance_minor, interest_rate')
-    .eq('is_simulated', false)
+    .eq('is_simulated', mode === 'simulated')
     .eq('status', 'active')
 
   let processed = 0
@@ -30,7 +31,7 @@ export async function runMonthlyAccrual(
         .select('id')
         .eq('interest_debt_id', debt.id)
         .eq('period', period)
-        .eq('mode', 'real')
+        .eq('mode', mode)
         .maybeSingle()
 
       if (existing) {
@@ -50,7 +51,7 @@ export async function runMonthlyAccrual(
         opening_balance_minor: Number(opening),
         accrued_amount_minor: Number(accrued_minor),
         closing_balance_minor: Number(closing_minor),
-        mode: 'real',
+        mode,
       })
 
       if (insertError) throw new Error(insertError.message)

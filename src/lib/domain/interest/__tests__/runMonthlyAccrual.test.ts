@@ -186,3 +186,107 @@ describe('runMonthlyAccrual', () => {
     expect(result.errors[0]).toContain(DEBT_ID_1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// runMonthlyAccrual — simulated mode
+// ---------------------------------------------------------------------------
+describe('runMonthlyAccrual — simulated mode', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('empty simulated debts → no-op', async () => {
+    const client = makeClient([makeFetchChain([])])
+    const result = await runMonthlyAccrual(client, PERIOD, 'simulated')
+    expect(result).toEqual({ processed: 0, skipped: 0, errors: [] })
+  })
+
+  it('processes simulated debt: accrual row has mode=simulated', async () => {
+    const debt: DebtRow = { id: DEBT_ID_1, current_balance_minor: 47875, interest_rate: '0.36' }
+    let capturedInsert: Record<string, unknown> | null = null
+
+    const insertMock = vi.fn().mockImplementation((row: Record<string, unknown>) => {
+      capturedInsert = row
+      return Promise.resolve({ error: null })
+    })
+
+    const eq3 = vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) })
+    const eq2 = vi.fn().mockReturnValue({ eq: eq3 })
+    const eq1Check = vi.fn().mockReturnValue({ eq: eq2 })
+    const selectCheck = vi.fn().mockReturnValue({ eq: eq1Check })
+
+    const eqUpdate = vi.fn().mockResolvedValue({ error: null })
+    const updateFn = vi.fn().mockReturnValue({ eq: eqUpdate })
+
+    const eqFetch2 = vi.fn().mockResolvedValue({ data: [debt], error: null })
+    const eqFetch1 = vi.fn().mockReturnValue({ eq: eqFetch2 })
+    const selectFetch = vi.fn().mockReturnValue({ eq: eqFetch1 })
+
+    let fromCallCount = 0
+    const from = vi.fn().mockImplementation(() => {
+      fromCallCount++
+      if (fromCallCount === 1) return { select: selectFetch }
+      if (fromCallCount === 2) return { select: selectCheck }
+      if (fromCallCount === 3) return { insert: insertMock }
+      return { update: updateFn }
+    })
+    // boundary: mock object — vitest mock of Supabase admin client shape
+    const client = { from } as unknown as ReturnType<typeof createAdminClient>
+
+    const result = await runMonthlyAccrual(client, PERIOD, 'simulated')
+    expect(result.processed).toBe(1)
+    expect(capturedInsert).not.toBeNull()
+    expect(capturedInsert!['mode']).toBe('simulated')
+  })
+
+  it('idempotency per mode: second call same period+simulated is skipped', async () => {
+    const debt: DebtRow = { id: DEBT_ID_1, current_balance_minor: 47875, interest_rate: '0.36' }
+    const client = makeClient([
+      makeFetchChain([debt]),
+      makeAccrualCheckChain({ id: 'existing-sim-accrual' }),
+    ])
+    const result = await runMonthlyAccrual(client, PERIOD, 'simulated')
+    expect(result.skipped).toBe(1)
+    expect(result.processed).toBe(0)
+  })
+
+  it('divergence: real 24% → accrued=958, simulated 36% → accrued=1436 (47875 opening)', async () => {
+    // Real: 47875 × 0.02 = 957.5 → 958 (ROUND_HALF_EVEN rounds .5 to even → 958)
+    // Simulated: 47875 × 0.03 = 1436.25 → 1436
+    const realDebt: DebtRow = { id: DEBT_ID_1, current_balance_minor: 47875, interest_rate: '0.24' }
+    const simDebt: DebtRow = { id: DEBT_ID_2, current_balance_minor: 47875, interest_rate: '0.36' }
+
+    const realInserts: Array<Record<string, unknown>> = []
+    const simInserts: Array<Record<string, unknown>> = []
+
+    function makeCapturingInsert(target: Array<Record<string, unknown>>) {
+      return {
+        insert: vi.fn().mockImplementation((row: Record<string, unknown>) => {
+          target.push(row)
+          return Promise.resolve({ error: null })
+        }),
+      }
+    }
+
+    const clientReal = makeClient([
+      makeFetchChain([realDebt]),
+      makeAccrualCheckChain(null),
+      makeCapturingInsert(realInserts),
+      makeUpdateChain(),
+    ])
+    await runMonthlyAccrual(clientReal, PERIOD, 'real')
+
+    const clientSim = makeClient([
+      makeFetchChain([simDebt]),
+      makeAccrualCheckChain(null),
+      makeCapturingInsert(simInserts),
+      makeUpdateChain(),
+    ])
+    await runMonthlyAccrual(clientSim, PERIOD, 'simulated')
+
+    expect(realInserts[0]['accrued_amount_minor']).toBe(958)
+    expect(realInserts[0]['closing_balance_minor']).toBe(48833)
+    expect(simInserts[0]['accrued_amount_minor']).toBe(1436)
+    expect(simInserts[0]['closing_balance_minor']).toBe(49311)
+    expect(realInserts[0]['mode']).toBe('real')
+    expect(simInserts[0]['mode']).toBe('simulated')
+  })
+})

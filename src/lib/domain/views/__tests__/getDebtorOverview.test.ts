@@ -12,6 +12,7 @@ const DEBT_ID_USD = '00000000-0000-0000-0001-000000000002'
 const INST_ID_1 = '00000000-0000-0000-0002-000000000001'
 const INST_ID_2 = '00000000-0000-0000-0002-000000000002'
 const IDEBT_ID_1 = '00000000-0000-0000-0003-000000000001'
+const IDEBT_ID_SIM_1 = '00000000-0000-0000-0004-000000000001'
 
 type MockDebt = {
   id: string
@@ -42,7 +43,8 @@ type MockInterestDebt = {
 function makeAdminClient(
   debts: MockDebt[],
   installments: MockInstallment[],
-  interestDebts: MockInterestDebt[] = [],
+  realInterestDebts: MockInterestDebt[] = [],
+  simulatedInterestDebts: MockInterestDebt[] = [],
 ): ReturnType<typeof createAdminClient> {
   const installmentsOrderSeq = vi.fn().mockResolvedValue({ data: installments, error: null })
   const installmentsOrderDate = vi.fn().mockReturnValue({ order: installmentsOrderSeq })
@@ -53,16 +55,28 @@ function makeAdminClient(
   const debtsEq1 = vi.fn().mockReturnValue({ eq: debtsEq2 })
   const debtsSelect = vi.fn().mockReturnValue({ eq: debtsEq1 })
 
-  // interest_debts chain: .select(...).in(...).eq(...).eq(...)
-  const interestDebtsResolved = vi.fn().mockResolvedValue({ data: interestDebts, error: null })
-  const interestDebtsEq1 = vi.fn().mockReturnValue({ eq: interestDebtsResolved })
-  const interestDebtsIn = vi.fn().mockReturnValue({ eq: interestDebtsEq1 })
-  const interestDebtsSelect = vi.fn().mockReturnValue({ in: interestDebtsIn })
+  // Real interest_debts: .select().in().eq('is_simulated', false).eq('status', 'active') → Promise
+  const realResolved = vi.fn().mockResolvedValue({ data: realInterestDebts, error: null })
+  const realEqSim = vi.fn().mockReturnValue({ eq: realResolved })
+  const realIn = vi.fn().mockReturnValue({ eq: realEqSim })
+  const realSelect = vi.fn().mockReturnValue({ in: realIn })
 
+  // Simulated interest_debts: .select().in().eq('is_simulated', true).eq('status', 'active') → Promise
+  const simResolved = vi.fn().mockResolvedValue({ data: simulatedInterestDebts, error: null })
+  const simEqSim = vi.fn().mockReturnValue({ eq: simResolved })
+  const simIn = vi.fn().mockReturnValue({ eq: simEqSim })
+  const simSelect = vi.fn().mockReturnValue({ in: simIn })
+
+  let interestDebtsCallCount = 0
   const from = vi.fn().mockImplementation((table: string) => {
     if (table === 'debts') return { select: debtsSelect }
     if (table === 'installments') return { select: installmentsSelect }
-    if (table === 'interest_debts') return { select: interestDebtsSelect }
+    if (table === 'interest_debts') {
+      interestDebtsCallCount++
+      return interestDebtsCallCount === 1
+        ? { select: realSelect }
+        : { select: simSelect }
+    }
     return { select: vi.fn() }
   })
 
@@ -79,7 +93,8 @@ describe('getDebtorOverview', () => {
     expect(result.debts).toHaveLength(0)
     expect(result.total_owed_by_currency.CRC).toBe(0n)
     expect(result.total_owed_by_currency.USD).toBe(0n)
-    expect(result.interest_debt_balance_by_currency.CRC).toBe(0n)
+    expect(result.real_balance_by_currency.CRC).toBe(0n)
+    expect(result.simulated_balance_by_currency.CRC).toBe(0n)
     expect(result.status).toBe('al_dia')
     expect(result.next_installment).toBeNull()
   })
@@ -176,33 +191,99 @@ describe('getDebtorOverview', () => {
     expect(typeof result.total_owed_by_currency.USD).toBe('bigint')
   })
 
-  it('includes active interest_debt balances in total_owed_by_currency', async () => {
+  it('includes active real interest_debt balances in total_owed_by_currency', async () => {
     const debts: MockDebt[] = [
       { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 147875, total_installments: 1, installment_amount_minor: 147875, status: 'active' },
     ]
     const installments: MockInstallment[] = [
       { id: INST_ID_1, due_date: '2025-06-01', amount_minor: 147875, remaining_amount_minor: 0, status: 'converted', sequence_number: 1, debt_id: DEBT_ID_CRC },
     ]
-    const interestDebts: MockInterestDebt[] = [
+    const realInterestDebts: MockInterestDebt[] = [
       { id: IDEBT_ID_1, debt_id: DEBT_ID_CRC, current_balance_minor: 47875 },
     ]
-    const client = makeAdminClient(debts, installments, interestDebts)
+    const client = makeAdminClient(debts, installments, realInterestDebts)
     const result = await getDebtorOverview(client, DEBTOR_ID)
-    expect(result.interest_debt_balance_by_currency.CRC).toBe(47875n)
-    // total_owed includes the interest_debt balance (installment is converted, remaining=0)
+    expect(result.real_balance_by_currency.CRC).toBe(47875n)
+    // total_owed includes the real interest_debt balance (installment is converted, remaining=0)
     expect(result.total_owed_by_currency.CRC).toBe(47875n)
   })
 
-  it('interest_debt_balance_by_currency values are bigint', async () => {
+  it('real_balance_by_currency values are bigint', async () => {
     const debts: MockDebt[] = [
       { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 100000, total_installments: 1, installment_amount_minor: 100000, status: 'active' },
     ]
-    const interestDebts: MockInterestDebt[] = [
+    const realInterestDebts: MockInterestDebt[] = [
       { id: IDEBT_ID_1, debt_id: DEBT_ID_CRC, current_balance_minor: 47875 },
     ]
-    const client = makeAdminClient(debts, [], interestDebts)
+    const client = makeAdminClient(debts, [], realInterestDebts)
     const result = await getDebtorOverview(client, DEBTOR_ID)
-    expect(typeof result.interest_debt_balance_by_currency.CRC).toBe('bigint')
-    expect(typeof result.interest_debt_balance_by_currency.USD).toBe('bigint')
+    expect(typeof result.real_balance_by_currency.CRC).toBe('bigint')
+    expect(typeof result.real_balance_by_currency.USD).toBe('bigint')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Simulation-specific tests
+  // ---------------------------------------------------------------------------
+
+  it('simulated_balance_by_currency is 0 when no simulated debts exist', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 100000, total_installments: 1, installment_amount_minor: 100000, status: 'active' },
+    ]
+    const client = makeAdminClient(debts, [])
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.simulated_balance_by_currency.CRC).toBe(0n)
+    expect(result.simulated_balance_by_currency.USD).toBe(0n)
+  })
+
+  it('simulated_balance_by_currency reflects simulated debt balance', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 147875, total_installments: 1, installment_amount_minor: 147875, status: 'active' },
+    ]
+    const simulatedDebts: MockInterestDebt[] = [
+      { id: IDEBT_ID_SIM_1, debt_id: DEBT_ID_CRC, current_balance_minor: 49311 },
+    ]
+    const client = makeAdminClient(debts, [], [], simulatedDebts)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.simulated_balance_by_currency.CRC).toBe(49311n)
+  })
+
+  it('total_owed_by_currency does NOT include simulated balance', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 147875, total_installments: 1, installment_amount_minor: 147875, status: 'active' },
+    ]
+    const installments: MockInstallment[] = [
+      { id: INST_ID_1, due_date: '2025-06-01', amount_minor: 147875, remaining_amount_minor: 0, status: 'converted', sequence_number: 1, debt_id: DEBT_ID_CRC },
+    ]
+    const realDebts: MockInterestDebt[] = [
+      { id: IDEBT_ID_1, debt_id: DEBT_ID_CRC, current_balance_minor: 47875 },
+    ]
+    const simulatedDebts: MockInterestDebt[] = [
+      { id: IDEBT_ID_SIM_1, debt_id: DEBT_ID_CRC, current_balance_minor: 49311 },
+    ]
+    const client = makeAdminClient(debts, installments, realDebts, simulatedDebts)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    // total_owed includes real interest debt but NOT simulated
+    expect(result.total_owed_by_currency.CRC).toBe(47875n)
+    expect(result.simulated_balance_by_currency.CRC).toBe(49311n)
+  })
+
+  it('real and simulated balances can diverge at different rates', async () => {
+    const debts: MockDebt[] = [
+      { id: DEBT_ID_CRC, currency: 'CRC', description: null, total_amount_minor: 147875, total_installments: 1, installment_amount_minor: 147875, status: 'active' },
+    ]
+    // real 24% annual → 47875 × 0.02 = 957.5 → 958 → 48833
+    // simulated 36% annual → 47875 × 0.03 = 1436.25 → 1436 → 49311
+    const realDebts: MockInterestDebt[] = [
+      { id: IDEBT_ID_1, debt_id: DEBT_ID_CRC, current_balance_minor: 48833 },
+    ]
+    const simulatedDebts: MockInterestDebt[] = [
+      { id: IDEBT_ID_SIM_1, debt_id: DEBT_ID_CRC, current_balance_minor: 49311 },
+    ]
+    const client = makeAdminClient(debts, [], realDebts, simulatedDebts)
+    const result = await getDebtorOverview(client, DEBTOR_ID)
+    expect(result.real_balance_by_currency.CRC).toBe(48833n)
+    expect(result.simulated_balance_by_currency.CRC).toBe(49311n)
+    // The two are different
+    expect(result.real_balance_by_currency.CRC).not.toBe(result.simulated_balance_by_currency.CRC)
   })
 })

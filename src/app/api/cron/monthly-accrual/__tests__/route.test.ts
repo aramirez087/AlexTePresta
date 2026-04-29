@@ -48,15 +48,23 @@ describe('GET /api/cron/monthly-accrual', () => {
     expect(res.status).toBe(401)
   })
 
-  it('returns 200 with summary when authenticated correctly', async () => {
+  it('returns 200 with real and simulated summaries when authenticated', async () => {
     const res = await GET(makeRequest(`Bearer ${CRON_SECRET}`))
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.processed).toBe(1)
-    expect(body.skipped).toBe(0)
-    expect(body.errors).toEqual([])
+    expect(body.real.processed).toBe(1)
+    expect(body.real.skipped).toBe(0)
+    expect(body.real.errors).toEqual([])
+    expect(body.simulated.processed).toBe(1)
     expect(typeof body.period).toBe('string')
     expect(body.period).toMatch(/^\d{4}-\d{2}$/)
+  })
+
+  it('calls runMonthlyAccrual twice: once real, once simulated', async () => {
+    await GET(makeRequest(`Bearer ${CRON_SECRET}`))
+    expect(runMonthlyAccrual).toHaveBeenCalledTimes(2)
+    expect(runMonthlyAccrual).toHaveBeenNthCalledWith(1, expect.anything(), expect.any(String), 'real')
+    expect(runMonthlyAccrual).toHaveBeenNthCalledWith(2, expect.anything(), expect.any(String), 'simulated')
   })
 
   it('calls runMonthlyAccrual with computed CR-timezone period', async () => {
@@ -66,17 +74,19 @@ describe('GET /api/cron/monthly-accrual', () => {
 
     await GET(makeRequest(`Bearer ${CRON_SECRET}`))
 
-    expect(runMonthlyAccrual).toHaveBeenCalledWith(expect.anything(), '2024-01')
+    expect(runMonthlyAccrual).toHaveBeenCalledWith(expect.anything(), '2024-01', 'real')
     vi.useRealTimers()
   })
 
-  it('is idempotent: second call returns 200 with skipped count', async () => {
-    vi.mocked(runMonthlyAccrual).mockResolvedValueOnce({ processed: 0, skipped: 2, errors: [] })
+  it('is idempotent: second call returns 200 with skipped counts', async () => {
+    vi.mocked(runMonthlyAccrual)
+      .mockResolvedValueOnce({ processed: 0, skipped: 2, errors: [] })
+      .mockResolvedValueOnce({ processed: 0, skipped: 1, errors: [] })
     const res = await GET(makeRequest(`Bearer ${CRON_SECRET}`))
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.skipped).toBe(2)
-    expect(body.processed).toBe(0)
+    expect(body.real.skipped).toBe(2)
+    expect(body.simulated.skipped).toBe(1)
   })
 
   it('returns 500 when runMonthlyAccrual throws', async () => {

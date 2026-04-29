@@ -173,24 +173,35 @@ export function DebtTimeline({ events, emptyMessage = 'Sin movimientos registrad
   return (
     <section aria-label="Historial de movimientos">
       <ol className="space-y-0">
-        {events.map((event, idx) => (
-          <li key={event.ref_id} className="flex gap-4 py-3">
-            <div className="flex flex-col items-center">
-              <EventIcon kind={event.kind} status={event.status} />
-              {idx < events.length - 1 && (
-                <div className="mt-1 w-px flex-1 bg-gray-200" aria-hidden="true" />
-              )}
-            </div>
-            <div className="flex-1 pb-4">
-              <p className="text-sm font-medium text-gray-900">{EVENT_LABELS[event.kind]}</p>
-              <p className="text-xs text-gray-500">{formatDate(event.date)}</p>
-              <p className="mt-1 font-semibold text-gray-900">
-                {formatMoney(event.amount_minor, event.currency)}
-              </p>
-              <StatusBadge status={event.status} />
-            </div>
-          </li>
-        ))}
+        {events.map((event, idx) => {
+          const isSimulated = event.meta?.simulated === true
+          return (
+            <li
+              key={event.ref_id}
+              className={`flex gap-4 py-3${isSimulated ? ' border-l-2 border-dashed border-amber-400 pl-2' : ''}`}
+            >
+              <div className="flex flex-col items-center">
+                <EventIcon kind={event.kind} status={event.status} />
+                {idx < events.length - 1 && (
+                  <div className="mt-1 w-px flex-1 bg-gray-200" aria-hidden="true" />
+                )}
+              </div>
+              <div className="flex-1 pb-4">
+                <p className="text-sm font-medium text-gray-900">{EVENT_LABELS[event.kind]}</p>
+                <p className="text-xs text-gray-500">{formatDate(event.date)}</p>
+                <p className="mt-1 font-semibold text-gray-900">
+                  {formatMoney(event.amount_minor, event.currency)}
+                </p>
+                <StatusBadge status={event.status} />
+                {isSimulated && (
+                  <span className="mt-1 inline-block text-xs font-medium text-amber-600">
+                    Simulado
+                  </span>
+                )}
+              </div>
+            </li>
+          )
+        })}
       </ol>
     </section>
   )
