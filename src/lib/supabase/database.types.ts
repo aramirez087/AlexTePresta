@@ -431,6 +431,21 @@ export type Database = {
         Args: { p_email: string; p_token: string; p_user_id: string }
         Returns: Json
       }
+      // added manually; regenerate with: npx supabase gen types
+      create_debt_with_installments: {
+        Args: {
+          p_created_by: string
+          p_currency: string
+          p_debtor_id: string
+          p_description: string | null
+          p_due_day: number
+          p_installment_amount_minor: number
+          p_start_month: string
+          p_total_amount_minor: number
+          p_total_installments: number
+        }
+        Returns: string
+      }
       is_admin: { Args: never; Returns: boolean }
     }
     Enums: {
