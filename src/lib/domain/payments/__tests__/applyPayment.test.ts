@@ -1,0 +1,332 @@
+// @vitest-environment node
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+vi.mock('@/lib/supabase/admin')
+vi.mock('@/lib/auth/session')
+
+import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdmin, requireUser } from '@/lib/auth/session'
+import { ForbiddenError, AuthRequiredError } from '@/lib/auth/errors'
+import { applyPayment } from '@/lib/domain/payments/applyPayment'
+import { submitPayment } from '@/lib/domain/payments/submitPayment'
+import { approvePayment } from '@/lib/domain/payments/approvePayment'
+import { registerPaymentDirect } from '@/lib/domain/payments/registerPaymentDirect'
+
+const ADMIN_USER = { id: 'admin-uuid-1', email: 'admin@test.com' }
+const DEBTOR_USER = { id: 'debtor-uuid-1', email: 'debtor@test.com' }
+const PAYMENT_ID = '00000000-0000-0000-0000-000000000010'
+const DEBTOR_ID = '00000000-0000-0000-0000-000000000099'
+const INSTALLMENT_ID_1 = '00000000-0000-0000-0000-000000000011'
+const INSTALLMENT_ID_2 = '00000000-0000-0000-0000-000000000012'
+const DEBT_ID = '00000000-0000-0000-0000-000000000001'
+
+function makeRpcMock(result: { data: unknown; error: null | { message: string } }) {
+  const rpc = vi.fn().mockResolvedValue(result)
+  // boundary: mock object — vitest mock of Supabase admin client shape
+  return { rpc } as unknown as ReturnType<typeof createAdminClient>
+}
+
+function makeAdminClientMock(opts: {
+  debtsResult?: { data: { id: string }[] | null; error: null }
+  insertResult?: { data: { id: string } | null; error: null | { message: string } }
+  rpcResult?: { data: unknown; error: null | { message: string } }
+}) {
+  const single = vi.fn().mockResolvedValue(opts.insertResult ?? { data: null, error: null })
+  const selectInsert = vi.fn().mockReturnValue({ single })
+  const insert = vi.fn().mockReturnValue({ select: selectInsert })
+
+  const limit = vi.fn().mockResolvedValue(opts.debtsResult ?? { data: [], error: null })
+  const eqStatus = vi.fn().mockReturnValue({ limit })
+  const eqCurrency = vi.fn().mockReturnValue({ eq: eqStatus })
+  const eqDebtor = vi.fn().mockReturnValue({ eq: eqCurrency })
+  const selectDebts = vi.fn().mockReturnValue({ eq: eqDebtor })
+  const from = vi.fn().mockReturnValue({ select: selectDebts, insert })
+
+  const rpc = vi.fn().mockResolvedValue(opts.rpcResult ?? { data: null, error: null })
+  // boundary: mock object — vitest mock of Supabase admin client shape
+  return { from, rpc } as unknown as ReturnType<typeof createAdminClient>
+}
+
+// ---------------------------------------------------------------------------
+// applyPayment — RPC delegation
+// ---------------------------------------------------------------------------
+describe('applyPayment — RPC delegation', () => {
+  it('passes payment_id to apply_payment RPC', async () => {
+    const successData = { applications: [], leftover_minor: 0 }
+    const mock = makeRpcMock({ data: successData, error: null })
+    await applyPayment(mock, PAYMENT_ID)
+    expect(mock.rpc).toHaveBeenCalledWith('apply_payment', { p_payment_id: PAYMENT_ID })
+  })
+
+  it('returns structured result on success', async () => {
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 147875 },
+      ],
+      leftover_minor: 0,
+    }
+    const mock = makeRpcMock({ data: successData, error: null })
+    const result = await applyPayment(mock, PAYMENT_ID)
+    expect(result.applications).toHaveLength(1)
+    expect(result.leftover_minor).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// applyPayment — error mapping
+// ---------------------------------------------------------------------------
+describe('applyPayment — error mapping', () => {
+  it('maps PaymentExcessError to Spanish message', async () => {
+    const mock = makeRpcMock({
+      data: null,
+      error: { message: 'PaymentExcessError: payment x has 52125 minor units unallocated' },
+    })
+    await expect(applyPayment(mock, PAYMENT_ID)).rejects.toThrow(/excede/i)
+  })
+
+  it('maps PaymentAlreadyAppliedError to Spanish message', async () => {
+    const mock = makeRpcMock({
+      data: null,
+      error: { message: 'PaymentAlreadyAppliedError: payment x is not pending' },
+    })
+    await expect(applyPayment(mock, PAYMENT_ID)).rejects.toThrow(/ya fue procesado/i)
+  })
+
+  it('maps PaymentNotFoundError to Spanish message', async () => {
+    const mock = makeRpcMock({
+      data: null,
+      error: { message: 'PaymentNotFoundError: payment x not found' },
+    })
+    await expect(applyPayment(mock, PAYMENT_ID)).rejects.toThrow(/no encontrado/i)
+  })
+
+  it('rethrows unknown errors with prefix', async () => {
+    const mock = makeRpcMock({
+      data: null,
+      error: { message: 'connection timeout' },
+    })
+    await expect(applyPayment(mock, PAYMENT_ID)).rejects.toThrow(/Error al aplicar pago/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// applyPayment — exact amount scenarios (mock RPC)
+// ---------------------------------------------------------------------------
+describe('applyPayment — exact amount scenarios', () => {
+  it('exact match: 147875 → single application of 147875', async () => {
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 147875 },
+      ],
+      leftover_minor: 0,
+    }
+    const mock = makeRpcMock({ data: successData, error: null })
+    const result = await applyPayment(mock, PAYMENT_ID)
+    expect(result.applications).toHaveLength(1)
+    expect(result.applications[0].applied_amount_minor).toBe(147875)
+    expect(result.applications[0].target_id).toBe(INSTALLMENT_ID_1)
+    expect(result.leftover_minor).toBe(0)
+  })
+
+  it('overflow: 295750 → two applications of 147875 each', async () => {
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 147875 },
+        { target_id: INSTALLMENT_ID_2, target_type: 'installment', applied_amount_minor: 147875 },
+      ],
+      leftover_minor: 0,
+    }
+    const mock = makeRpcMock({ data: successData, error: null })
+    const result = await applyPayment(mock, PAYMENT_ID)
+    expect(result.applications).toHaveLength(2)
+    const total = result.applications.reduce((sum, a) => sum + a.applied_amount_minor, 0)
+    expect(total).toBe(295750)
+    expect(result.leftover_minor).toBe(0)
+  })
+
+  it('excess in Phase 1: 200000 against 147875 → throws', async () => {
+    const mock = makeRpcMock({
+      data: null,
+      error: { message: 'PaymentExcessError: payment x has 52125 minor units unallocated' },
+    })
+    await expect(applyPayment(mock, PAYMENT_ID)).rejects.toThrow(/excede/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// submitPayment — auth guard
+// ---------------------------------------------------------------------------
+describe('submitPayment — auth guard', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns serverError when unauthenticated', async () => {
+    vi.mocked(requireUser).mockRejectedValue(new AuthRequiredError())
+    const result = await submitPayment({ currency: 'CRC', amount_minor: 147875 })
+    expect(result?.serverError).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// submitPayment — currency validation
+// ---------------------------------------------------------------------------
+describe('submitPayment — currency validation', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns serverError when no active debt in currency', async () => {
+    vi.mocked(requireUser).mockResolvedValue(
+      DEBTOR_USER as unknown as Awaited<ReturnType<typeof requireUser>>,
+    )
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeAdminClientMock({ debtsResult: { data: [], error: null } }),
+    )
+    const result = await submitPayment({ currency: 'CRC', amount_minor: 147875 })
+    expect(result?.serverError).toBeDefined()
+    expect(result?.serverError).toMatch(/deudas activas/i)
+  })
+
+  it('returns paymentId on valid submission', async () => {
+    vi.mocked(requireUser).mockResolvedValue(
+      DEBTOR_USER as unknown as Awaited<ReturnType<typeof requireUser>>,
+    )
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeAdminClientMock({
+        debtsResult: { data: [{ id: DEBT_ID }], error: null },
+        insertResult: { data: { id: PAYMENT_ID }, error: null },
+      }),
+    )
+    const result = await submitPayment({ currency: 'CRC', amount_minor: 147875 })
+    expect(result?.data?.paymentId).toBe(PAYMENT_ID)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// submitPayment — Zod validation
+// ---------------------------------------------------------------------------
+describe('submitPayment — Zod validation', () => {
+  it('rejects invalid currency EUR', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await submitPayment({ currency: 'EUR' as any, amount_minor: 147875 })
+    expect(result?.validationErrors).toBeDefined()
+  })
+
+  it('rejects negative amount', async () => {
+    const result = await submitPayment({ currency: 'CRC', amount_minor: -1 })
+    expect(result?.validationErrors).toBeDefined()
+  })
+
+  it('rejects zero amount', async () => {
+    const result = await submitPayment({ currency: 'CRC', amount_minor: 0 })
+    expect(result?.validationErrors).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// approvePayment — auth guard + delegation
+// ---------------------------------------------------------------------------
+describe('approvePayment — auth guard', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns serverError when non-admin calls approvePayment', async () => {
+    vi.mocked(requireAdmin).mockRejectedValue(new ForbiddenError())
+    const result = await approvePayment({ payment_id: PAYMENT_ID })
+    expect(result?.serverError).toBeDefined()
+  })
+
+  it('delegates to applyPayment RPC and returns result', async () => {
+    vi.mocked(requireAdmin).mockResolvedValue(
+      ADMIN_USER as unknown as Awaited<ReturnType<typeof requireAdmin>>,
+    )
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 147875 },
+      ],
+      leftover_minor: 0,
+    }
+    vi.mocked(createAdminClient).mockReturnValue(makeRpcMock({ data: successData, error: null }))
+    const result = await approvePayment({ payment_id: PAYMENT_ID })
+    expect(result?.data?.applications).toHaveLength(1)
+    expect(result?.data?.leftover_minor).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// registerPaymentDirect — auth guard + currency validation + success
+// ---------------------------------------------------------------------------
+describe('registerPaymentDirect — auth guard', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns serverError when non-admin calls registerPaymentDirect', async () => {
+    vi.mocked(requireAdmin).mockRejectedValue(new ForbiddenError())
+    const result = await registerPaymentDirect({
+      debtor_id: DEBTOR_ID,
+      currency: 'CRC',
+      amount_minor: 147875,
+    })
+    expect(result?.serverError).toBeDefined()
+  })
+})
+
+describe('registerPaymentDirect — currency validation', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns serverError when debtor has no active debt in currency', async () => {
+    vi.mocked(requireAdmin).mockResolvedValue(
+      ADMIN_USER as unknown as Awaited<ReturnType<typeof requireAdmin>>,
+    )
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeAdminClientMock({ debtsResult: { data: [], error: null } }),
+    )
+    const result = await registerPaymentDirect({
+      debtor_id: DEBTOR_ID,
+      currency: 'CRC',
+      amount_minor: 147875,
+    })
+    expect(result?.serverError).toBeDefined()
+    expect(result?.serverError).toMatch(/deudas activas/i)
+  })
+})
+
+describe('registerPaymentDirect — success', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('inserts payment with created_by = admin.id, applies, returns paymentId', async () => {
+    vi.mocked(requireAdmin).mockResolvedValue(
+      ADMIN_USER as unknown as Awaited<ReturnType<typeof requireAdmin>>,
+    )
+    const successData = {
+      applications: [
+        { target_id: INSTALLMENT_ID_1, target_type: 'installment', applied_amount_minor: 147875 },
+      ],
+      leftover_minor: 0,
+    }
+
+    const rpc = vi.fn().mockResolvedValue({ data: successData, error: null })
+    const single = vi.fn().mockResolvedValue({ data: { id: PAYMENT_ID }, error: null })
+    const selectInsert = vi.fn().mockReturnValue({ single })
+    const insert = vi.fn().mockReturnValue({ select: selectInsert })
+    const limit = vi.fn().mockResolvedValue({ data: [{ id: DEBT_ID }], error: null })
+    const eqStatus = vi.fn().mockReturnValue({ limit })
+    const eqCurrency = vi.fn().mockReturnValue({ eq: eqStatus })
+    const eqDebtor = vi.fn().mockReturnValue({ eq: eqCurrency })
+    const selectDebts = vi.fn().mockReturnValue({ eq: eqDebtor })
+    const from = vi.fn().mockReturnValue({ select: selectDebts, insert })
+    // boundary: mock object — vitest mock of Supabase admin client shape
+    const mock = { from, rpc } as unknown as ReturnType<typeof createAdminClient>
+    vi.mocked(createAdminClient).mockReturnValue(mock)
+
+    const result = await registerPaymentDirect({
+      debtor_id: DEBTOR_ID,
+      currency: 'CRC',
+      amount_minor: 147875,
+    })
+
+    expect(result?.data?.paymentId).toBe(PAYMENT_ID)
+    expect(result?.data?.applications).toHaveLength(1)
+
+    // Verify insert was called with created_by = admin's id
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ created_by: ADMIN_USER.id }),
+    )
+  })
+})

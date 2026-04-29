@@ -432,6 +432,10 @@ export type Database = {
         Returns: Json
       }
       // added manually; regenerate with: npx supabase gen types
+      apply_payment: {
+        Args: { p_payment_id: string }
+        Returns: Json
+      }
       create_debt_with_installments: {
         Args: {
           p_created_by: string
